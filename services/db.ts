@@ -1,5 +1,5 @@
 
-import { supabase } from './supabaseClient';
+import { supabase, SUPABASE_IS_CONFIGURED } from './supabaseClient';
 import { AppState, Project, Donation, Campaign, NewsUpdate, ContactMessage, SiteSettings, PaymentMethod } from '../types';
 
 /**
@@ -11,6 +11,11 @@ export const db = {
    * Loads the complete application state from Supabase tables.
    */
   async loadState(): Promise<Partial<AppState>> {
+    // Early exit if not configured to prevent fetch timeouts stalling the app
+    if (!SUPABASE_IS_CONFIGURED) {
+      return {};
+    }
+
     try {
       const [
         { data: projects },
@@ -26,7 +31,7 @@ export const db = {
         supabase.from('donations').select('*').order('date', { ascending: false }),
         supabase.from('news').select('*').order('date', { ascending: false }),
         supabase.from('messages').select('*').order('date', { ascending: false }),
-        supabase.from('settings').select('*').single(),
+        supabase.from('settings').select('*').maybeSingle(),
         supabase.from('payment_methods').select('*').order('name', { ascending: true })
       ]);
 
@@ -46,14 +51,17 @@ export const db = {
   },
 
   async saveProject(project: Project) {
+    if (!SUPABASE_IS_CONFIGURED) return;
     return supabase.from('projects').upsert(project);
   },
 
   async deleteProject(id: string) {
+    if (!SUPABASE_IS_CONFIGURED) return;
     return supabase.from('projects').delete().eq('id', id);
   },
 
   async saveDonation(donation: Donation) {
+    if (!SUPABASE_IS_CONFIGURED) return;
     const { error } = await supabase.from('donations').insert(donation);
     if (error) throw error;
     
@@ -61,14 +69,14 @@ export const db = {
       const { data: p } = await supabase.from('projects').select('currentAmount').eq('id', donation.projectId).single();
       if (p) {
         await supabase.from('projects')
-          .update({ currentAmount: p.currentAmount + donation.amount })
+          .update({ currentAmount: (p.currentAmount || 0) + donation.amount })
           .eq('id', donation.projectId);
       }
     } else if (donation.campaignId) {
       const { data: c } = await supabase.from('campaigns').select('currentAmount').eq('id', donation.campaignId).single();
       if (c) {
         await supabase.from('campaigns')
-          .update({ currentAmount: c.currentAmount + donation.amount })
+          .update({ currentAmount: (c.currentAmount || 0) + donation.amount })
           .eq('id', donation.campaignId);
       }
     }
@@ -76,22 +84,27 @@ export const db = {
   },
 
   async updatePaymentMethod(method: PaymentMethod) {
+    if (!SUPABASE_IS_CONFIGURED) return;
     return supabase.from('payment_methods').upsert(method);
   },
 
   async saveSettings(settings: SiteSettings) {
+    if (!SUPABASE_IS_CONFIGURED) return;
     return supabase.from('settings').upsert({ id: 1, ...settings });
   },
 
   async saveMessage(message: ContactMessage) {
+    if (!SUPABASE_IS_CONFIGURED) return;
     return supabase.from('messages').insert(message);
   },
 
   async markMessageRead(id: string) {
+    if (!SUPABASE_IS_CONFIGURED) return;
     return supabase.from('messages').update({ isRead: true }).eq('id', id);
   },
 
   async deleteMessage(id: string) {
+    if (!SUPABASE_IS_CONFIGURED) return;
     return supabase.from('messages').delete().eq('id', id);
   }
 };
