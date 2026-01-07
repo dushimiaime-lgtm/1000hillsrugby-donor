@@ -4,7 +4,7 @@ import { HashRouter, Routes, Route, Link, useLocation } from 'react-router-dom';
 import { Project, Donation, Campaign, NewsUpdate, ContactMessage, AppState, SiteSettings, PaymentMethod } from './types';
 import { INITIAL_PROJECTS, INITIAL_DONATIONS, INITIAL_CAMPAIGNS, INITIAL_NEWS, INITIAL_MESSAGES } from './constants';
 import { db } from './services/db';
-import { supabase } from './services/supabaseClient';
+import { supabase, SUPABASE_IS_CONFIGURED } from './services/supabaseClient';
 import Home from './pages/Home';
 import About from './pages/About';
 import Projects from './pages/Projects';
@@ -68,44 +68,55 @@ const App: React.FC = () => {
   // Initial Load & Realtime Subscriptions
   useEffect(() => {
     const initialize = async () => {
+      if (!SUPABASE_IS_CONFIGURED) {
+        console.warn("Supabase is not configured. Using local static data.");
+        setDbConnected(false);
+        return;
+      }
+
       setIsSyncing(true);
-      const data = await db.loadState();
-      
-      setState(prev => ({
-        ...prev,
-        projects: data.projects?.length ? data.projects : prev.projects,
-        campaigns: data.campaigns?.length ? data.campaigns : prev.campaigns,
-        donations: data.donations?.length ? data.donations : prev.donations,
-        news: data.news?.length ? data.news : prev.news,
-        messages: data.messages?.length ? data.messages : prev.messages,
-        settings: data.settings ? data.settings : prev.settings,
-        paymentMethods: data.paymentMethods?.length ? data.paymentMethods : prev.paymentMethods,
-      }));
-      
-      setDbConnected(true);
-      setIsSyncing(false);
+      try {
+        const data = await db.loadState();
+        
+        setState(prev => ({
+          ...prev,
+          projects: data.projects?.length ? data.projects : prev.projects,
+          campaigns: data.campaigns?.length ? data.campaigns : prev.campaigns,
+          donations: data.donations?.length ? data.donations : prev.donations,
+          news: data.news?.length ? data.news : prev.news,
+          messages: data.messages?.length ? data.messages : prev.messages,
+          settings: data.settings ? data.settings : prev.settings,
+          paymentMethods: data.paymentMethods?.length ? data.paymentMethods : prev.paymentMethods,
+        }));
+        
+        setDbConnected(true);
 
-      // Realtime Listeners
-      const channel = supabase
-        .channel('schema-db-changes')
-        .on('postgres_changes', { event: '*', schema: 'public', table: 'donations' }, () => {
-          db.loadState().then(d => setState(s => ({ ...s, donations: d.donations || s.donations })));
-        })
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'donations' }, payload => {
-          notify(`New donation of $${payload.new.amount} received!`, 'donation');
-        })
-        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
-          notify(`New message from ${payload.new.name}`, 'info');
-          db.loadState().then(d => setState(s => ({ ...s, messages: d.messages || s.messages })));
-        })
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'payment_methods' }, () => {
-          db.loadState().then(d => setState(s => ({ ...s, paymentMethods: d.paymentMethods || s.paymentMethods })));
-        })
-        .subscribe();
+        // Realtime Listeners
+        const channel = supabase
+          .channel('schema-db-changes')
+          .on('postgres_changes', { event: '*', schema: 'public', table: 'donations' }, () => {
+            db.loadState().then(d => setState(s => ({ ...s, donations: d.donations || s.donations })));
+          })
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'donations' }, payload => {
+            notify(`New donation of $${payload.new.amount} received!`, 'donation');
+          })
+          .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, payload => {
+            notify(`New message from ${payload.new.name}`, 'info');
+            db.loadState().then(d => setState(s => ({ ...s, messages: d.messages || s.messages })));
+          })
+          .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'payment_methods' }, () => {
+            db.loadState().then(d => setState(s => ({ ...s, paymentMethods: d.paymentMethods || s.paymentMethods })));
+          })
+          .subscribe();
 
-      return () => {
-        supabase.removeChannel(channel);
-      };
+        return () => {
+          supabase.removeChannel(channel);
+        };
+      } catch (err) {
+        console.error("Initialization failed:", err);
+      } finally {
+        setIsSyncing(false);
+      }
     };
     initialize();
   }, [notify]);
@@ -115,6 +126,10 @@ const App: React.FC = () => {
   }, [state.settings.primaryColor]);
 
   const addDonation = useCallback(async (donation: Donation) => {
+    if (!SUPABASE_IS_CONFIGURED) {
+      notify('Local mode: Donation recorded in memory only.', 'info');
+      return;
+    }
     setIsSyncing(true);
     try {
       await db.saveDonation(donation);
@@ -141,6 +156,11 @@ const App: React.FC = () => {
   }, [notify]);
 
   const addMessage = useCallback(async (msg: ContactMessage) => {
+    if (!SUPABASE_IS_CONFIGURED) {
+      setState(prev => ({ ...prev, messages: [msg, ...prev.messages] }));
+      notify(`Message sent (Local Mode).`, 'success');
+      return;
+    }
     setIsSyncing(true);
     try {
       await db.saveMessage(msg);
@@ -154,9 +174,9 @@ const App: React.FC = () => {
   }, [notify]);
 
   const manageProjects = {
-    add: async (p: Project) => { setIsSyncing(true); await db.saveProject(p); setState(prev => ({ ...prev, projects: [p, ...prev.projects] })); setIsSyncing(false); notify('Project created.', 'success'); },
-    update: async (p: Project) => { setIsSyncing(true); await db.saveProject(p); setState(prev => ({ ...prev, projects: prev.projects.map(item => item.id === p.id ? p : item) })); setIsSyncing(false); notify('Project updated.', 'success'); },
-    delete: async (id: string) => { setIsSyncing(true); await db.deleteProject(id); setState(prev => ({ ...prev, projects: prev.projects.filter(p => p.id !== id) })); setIsSyncing(false); notify('Project deleted.', 'error'); }
+    add: async (p: Project) => { setIsSyncing(true); if (SUPABASE_IS_CONFIGURED) await db.saveProject(p); setState(prev => ({ ...prev, projects: [p, ...prev.projects] })); setIsSyncing(false); notify('Project created.', 'success'); },
+    update: async (p: Project) => { setIsSyncing(true); if (SUPABASE_IS_CONFIGURED) await db.saveProject(p); setState(prev => ({ ...prev, projects: prev.projects.map(item => item.id === p.id ? p : item) })); setIsSyncing(false); notify('Project updated.', 'success'); },
+    delete: async (id: string) => { setIsSyncing(true); if (SUPABASE_IS_CONFIGURED) await db.deleteProject(id); setState(prev => ({ ...prev, projects: prev.projects.filter(p => p.id !== id) })); setIsSyncing(false); notify('Project deleted.', 'error'); }
   };
 
   const manageCampaigns = {
@@ -172,19 +192,20 @@ const App: React.FC = () => {
   };
 
   const manageMessages = {
-    markRead: async (id: string) => { setIsSyncing(true); await db.markMessageRead(id); setState(prev => ({ ...prev, messages: prev.messages.map(m => m.id === id ? { ...m, isRead: true } : m) })); setIsSyncing(false); },
-    delete: async (id: string) => { setIsSyncing(true); await db.deleteMessage(id); setState(prev => ({ ...prev, messages: prev.messages.filter(m => m.id !== id) })); setIsSyncing(false); notify('Message deleted.', 'info'); }
+    markRead: async (id: string) => { setIsSyncing(true); if (SUPABASE_IS_CONFIGURED) await db.markMessageRead(id); setState(prev => ({ ...prev, messages: prev.messages.map(m => m.id === id ? { ...m, isRead: true } : m) })); setIsSyncing(false); },
+    delete: async (id: string) => { setIsSyncing(true); if (SUPABASE_IS_CONFIGURED) await db.deleteMessage(id); setState(prev => ({ ...prev, messages: prev.messages.filter(m => m.id !== id) })); setIsSyncing(false); notify('Message deleted.', 'info'); }
   };
 
-  const updateSettings = async (settings: SiteSettings) => { setIsSyncing(true); await db.saveSettings(settings); setState(prev => ({ ...prev, settings })); setIsSyncing(false); notify('Settings updated.', 'success'); };
+  const updateSettings = async (settings: SiteSettings) => { setIsSyncing(true); if (SUPABASE_IS_CONFIGURED) await db.saveSettings(settings); setState(prev => ({ ...prev, settings })); setIsSyncing(false); notify('Settings updated.', 'success'); };
   
   const updatePaymentMethods = async (methods: PaymentMethod[]) => {
     setIsSyncing(true);
     try {
-      // Find the changed method
-      const changed = methods.find((m, i) => m.isActive !== state.paymentMethods[i]?.isActive);
-      if (changed) {
-        await db.updatePaymentMethod(changed);
+      if (SUPABASE_IS_CONFIGURED) {
+        const changed = methods.find((m, i) => m.isActive !== state.paymentMethods[i]?.isActive);
+        if (changed) {
+          await db.updatePaymentMethod(changed);
+        }
       }
       setState(prev => ({ ...prev, paymentMethods: methods }));
       notify('Payment methods updated.', 'success');
@@ -283,8 +304,8 @@ const Navbar: React.FC<{ settings: SiteSettings, messagesCount: number, isSyncin
             ))}
             <div className="h-6 w-px bg-slate-200" />
             <div className="flex items-center space-x-2 bg-slate-50 px-3 py-1.5 rounded-full border border-slate-100">
-               {isSyncing ? <RefreshCw className="w-3.5 h-3.5 text-emerald-500 animate-spin" /> : <Cloud className="w-3.5 h-3.5 text-slate-400" />}
-               <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{isSyncing ? 'Syncing...' : 'Supabase Live'}</span>
+               {isSyncing ? <RefreshCw className="w-3.5 h-3.5 text-emerald-500 animate-spin" /> : (SUPABASE_IS_CONFIGURED ? <Cloud className="w-3.5 h-3.5 text-slate-400" /> : <CloudOff className="w-3.5 h-3.5 text-red-400" />)}
+               <span className="text-[10px] font-black uppercase tracking-widest text-slate-500">{isSyncing ? 'Syncing...' : (SUPABASE_IS_CONFIGURED ? 'Supabase Live' : 'Local Mode')}</span>
             </div>
             <Link to="/admin" className="relative p-2 text-slate-400 hover:text-emerald-600 transition-colors">
               <Settings className="w-6 h-6" />
@@ -319,7 +340,7 @@ const Footer: React.FC<{ settings: SiteSettings, dbConnected: boolean }> = ({ se
           <p className="max-w-md text-xl leading-relaxed">{settings.heroSubtitle}</p>
           <div className="flex items-center space-x-3 bg-white/5 w-fit px-4 py-2 rounded-2xl border border-white/10">
             {dbConnected ? <Cloud className="w-4 h-4 text-emerald-500" /> : <CloudOff className="w-4 h-4 text-red-500" />}
-            <span className="text-xs font-bold text-white uppercase tracking-widest">{dbConnected ? 'Supabase Connected' : 'Connecting...'}</span>
+            <span className="text-xs font-bold text-white uppercase tracking-widest">{dbConnected ? 'Supabase Connected' : (SUPABASE_IS_CONFIGURED ? 'Connecting...' : 'Database Unconfigured')}</span>
           </div>
         </div>
         <div>

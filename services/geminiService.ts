@@ -1,9 +1,13 @@
 
-import { GoogleGenAI, Type } from "@google/genai";
+import { GoogleGenAI } from "@google/genai";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+// Safe access to process.env.API_KEY
+const apiKey = typeof process !== 'undefined' && process.env ? process.env.API_KEY : '';
+
+const ai = apiKey ? new GoogleGenAI({ apiKey }) : null;
 
 export async function generateProjectDescription(topic: string) {
+  if (!ai) return "AI services are not configured.";
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -17,6 +21,7 @@ export async function generateProjectDescription(topic: string) {
 }
 
 export async function generateThankYouNote(donorName: string, amount: number, projectTitle: string) {
+  if (!ai) return "Thank you so much for your generous support!";
   try {
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",

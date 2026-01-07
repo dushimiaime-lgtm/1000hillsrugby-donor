@@ -82,12 +82,4 @@ export interface AppState {
   settings: SiteSettings;
 }
 
-export enum Page {
-  HOME = 'home',
-  ABOUT = 'about',
-  PROJECTS = 'projects',
-  CAMPAIGNS = 'campaigns',
-  DONATE = 'donate',
-  CONTACT = 'contact',
-  ADMIN = 'admin'
-}
+export type PageType = 'home' | 'about' | 'projects' | 'campaigns' | 'donate' | 'contact' | 'admin';
